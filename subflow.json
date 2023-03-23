@@ -1,0 +1,232 @@
+{
+    "id": "df60034af9a08980",
+    "type": "subflow",
+    "name": "[AI] Detect-sm",
+    "info": "Run prediction on input image using Tensorflow 2 Savedmodel.\n\nInput image must be image buffer in **'msg.payload'**.\n\nOutputs:\n- Prediction result\n- Metagraph (tf.node.getMetaGraphsFromSavedModel)\n- Tensorflow memory status (tf.memory())\n\nExcepts following content in model folder:\n- saved_model.pb (Tensorflow 2 saved model)\n- variables (folder that might include files for saved model)\n- labels.json (array of label strings that model can detect)\n- metadata.json (metadata of used model in JSON-format, optional)\n\nSupported image formats:\n- JPG, PNG, BMP, GIF\n\nSupports:\n- Saved model trained using tequ-tf2-ca-training-pipeline\n- TensorFlow 2 Detection Model Zoo models:\n    - SSD MobileNet v2 320x320 \n    - SSD MobileNet V2 FPNLite 320x320\t\n    - SSD MobileNet V2 FPNLite 640x640\n\nOthers might work too, but have not been tested.\n\nTo train a model, please look:\n\nhttps://github.com/Lapland-UAS-Tequ/tequ-tf2-ca-training-pipeline\n\nDependencies:\n- https://www.npmjs.com/package/@tensorflow/tfjs-node-gpu\n- https://flows.nodered.org/node/node-red-contrib-image-info",
+    "category": "Tequ-API Client",
+    "in": [
+        {
+            "x": 100,
+            "y": 100,
+            "wires": [
+                {
+                    "id": "f5e51443b0ac6807"
+                }
+            ]
+        }
+    ],
+    "out": [
+        {
+            "x": 770,
+            "y": 220,
+            "wires": [
+                {
+                    "id": "ed443448e3d3331d",
+                    "port": 0
+                }
+            ]
+        },
+        {
+            "x": 790,
+            "y": 280,
+            "wires": [
+                {
+                    "id": "ed443448e3d3331d",
+                    "port": 1
+                }
+            ]
+        },
+        {
+            "x": 800,
+            "y": 340,
+            "wires": [
+                {
+                    "id": "ed443448e3d3331d",
+                    "port": 2
+                }
+            ]
+        }
+    ],
+    "env": [
+        {
+            "name": "model_folder",
+            "type": "str",
+            "value": "savedmodel",
+            "ui": {
+                "type": "input",
+                "opts": {
+                    "types": [
+                        "str",
+                        "env"
+                    ]
+                }
+            }
+        },
+        {
+            "name": "threshold",
+            "type": "num",
+            "value": "0.75",
+            "ui": {
+                "type": "spinner",
+                "opts": {
+                    "min": 0,
+                    "max": 1
+                }
+            }
+        }
+    ],
+    "meta": {
+        "module": "tequ-node-red-object-detection-tf2-sm",
+        "type": "tequ-node-red-object-detection-tf2-sm",
+        "version": "0.0.1",
+        "author": "juha.autioniemi@lapinamk.fi",
+        "desc": "Detect objects from image using Tensorflow 2 SavedModel.",
+        "license": "MIT"
+    },
+    "color": "#FFCC66",
+    "inputLabels": [
+        "msg.payload (image buffer)"
+    ],
+    "outputLabels": [
+        "result",
+        "metagraph",
+        "tensorflow info"
+    ],
+    "icon": "node-red/status.svg",
+    "status": {
+        "x": 740,
+        "y": 420,
+        "wires": [
+            {
+                "id": "f5fcd7150330c1fa",
+                "port": 0
+            }
+        ]
+    },
+    "flow": [
+        {
+            "id": "ed443448e3d3331d",
+            "type": "function",
+            "z": "df60034af9a08980",
+            "name": "Predict saved model",
+            "func": "const savedmodel = context.get(\"savedmodel\")\nconst imageBuffer = msg.payload;\nlet results = [];\nconst labels = context.get(\"labels\");\nconst threshold = msg.threshold;\nconst image_width = msg.width;\nconst image_height = msg.height;\n\nfunction detect(input){\n    return tf.tidy(() => {\n        const inputTensor = tf.node.decodeImage(input, 3).expandDims(0);  \n        const outputTensor =  savedmodel.predict({input_tensor:inputTensor});\n        const scores = outputTensor['detection_scores'].arraySync();\n        const boxes = outputTensor['detection_boxes'].arraySync();\n        const names = outputTensor['detection_classes'].arraySync();\n\n               \n        for (let i = 0; i < scores[0].length; i++) {\n            try{\n                if (scores[0][i] > threshold) {\n                    let newObject = {\n                        \"bbox\":[\n                            boxes[0][i][1] * image_width,\n                            boxes[0][i][0] * image_height,\n                            (boxes[0][i][3] - boxes[0][i][1]) * image_width,\n                            (boxes[0][i][2] - boxes[0][i][0]) * image_height\n                            ],\n                        \"class\":labels[names[0][i]-1],\n                        \"label\":labels[names[0][i]-1],\n                        \"score\":scores[0][i]\n                    }\n                    results.push(newObject)\n                }\n            }\n            catch(error){\n                node.warn(error)\n            }\n        }\n        \n        \n        // Create output message\n        let result_message = {\n            \"labels\":context.get(\"labels\"),\n            \"thresholdType\":msg.thresholdType,\n            \"threshold\": msg.threshold,\n            \"topic\":msg.topic,\n            \"payload\":{\n                \"inference\":{\n                    \"metadata\":context.get(\"metadata\"),\n                    \"time_ms\": new Date().getTime() - msg.start,\n                    \"validated\":false,\n                    \"result\":results,\n                    \"type\":\"object detection\"\n                },\n                \"image\":{\n                    \"buffer\":imageBuffer,\n                    \"width\": msg.width,\n                    \"height\": msg.height,\n                    \"type\": msg.type,\n                    \"size\": (imageBuffer).length,\n                    \"exif\":{}\n                }\n            }\n        }\n    \n        node.status({fill:\"blue\",shape:\"dot\",text:(result_message.payload.inference.result).length+\" object(s) found in \"+ result_message.payload.inference.time_ms+\" ms\"});  \n        return result_message;\n    });\n}\n\nreturn [ detect(msg.payload), null, { payload:tf.memory() } ];",
+            "outputs": 3,
+            "noerr": 0,
+            "initialize": "// Code added here will be run once\n// whenever the node is started.\nconst platform = os.platform()\nlet loaded_model;\nlet model_folder;\nlet model_file;\nlet labels_file;\nlet metadata_file;\n\nasync function loadModel(model_path){\n    loaded_model = await tf.node.loadSavedModel(model_path);\n    context.set(\"savedmodel\", loaded_model);\n}\n\nasync function loadMetaGraphs(model_path){\n    const metagraphs = await tf.node.getMetaGraphsFromSavedModel(model_path);\n    context.set(\"metagraphs\", metagraphs);\n    node.send([null,{payload:metagraphs},null]);\n}\n\nasync function warmUpModel(model){\n    tf.tidy(() => {\n        const tempTensor = tf.zeros([1, 2, 2, 3]).toInt();\n        model.predict(tempTensor)\n    });    \n}\n\nif(platform == \"win32\"){\n    model_folder = env.get(\"model_folder\")\n    model_file = model_folder+\"\\\\saved_model.pb\"\n    labels_file = model_folder+\"\\\\labels.json\"\n    metadata_file = model_folder+\"\\\\metadata.json\"\n}\nelse{\n    model_folder = env.get(\"model_folder\")\n    model_file = model_folder+\"/saved_model.pb\"\n    labels_file = model_folder+\"/labels.json\"\n    metadata_file = model_folder+\"/metadata.json\"    \n}\n\nif (context.get(\"labels\") === undefined) {\n    try {\n        context.set(\"labels\",JSON.parse(fs.readFileSync(labels_file, 'utf8')))\n    } catch (err) {\n        node.error(\"Error reading labels\",err)\n    }\n}\n\nif (context.get(\"metadata\") === undefined) {\n    try {\n        context.set(\"metadata\",JSON.parse(fs.readFileSync(metadata_file, 'utf8')))\n    } catch (err) {\n        node.error(\"Error reading metadata\",err)\n    }\n}\n\ntry {\n        if(fs.existsSync(model_folder)){\n            if(fs.existsSync(model_file)){\n                    node.status({fill:\"yellow\",shape:\"dot\",text:\"Loading savedmodel...\"});\n                    await loadModel(model_folder);\n                    node.status({fill:\"yellow\",shape:\"dot\",text:\"Loading metagraphs...\"});\n                    await loadMetaGraphs(model_folder)\n                    node.status({fill:\"yellow\",shape:\"dot\",text:\"Warming up savedmodel...\"});\n                    await warmUpModel(context.get(\"savedmodel\")) \n                    const backend = tf.getBackend()\n                    node.send([null,null,{payload:tf.memory()}]);\n                    node.status({fill:\"green\",shape:\"dot\",text:\"OS: \"+platform+\" | Backend: \"+backend})    \n            }\n            else{\n                node.status({fill:\"red\",shape:\"dot\",text:\"saved_model.pb not found\"})    \n            }\n        }\n        else{\n            node.status({fill:\"red\",shape:\"dot\",text:\"Model folder \"+model_folder+\" not found\"})\n        }\n}\ncatch (err) {\n        node.status({fill:\"red\",shape:\"dot\",text:\"Error loading model\"})\n        node.error(err,err)\n}",
+            "finalize": "// Code added here will be run when the\n// node is being stopped or re-deployed.\nconst model = context.get(\"savedmodel\")\ntf.dispose(model)\ncontext.set(\"model\", undefined)\ncontext.set(\"modelInfo\", undefined)",
+            "libs": [
+                {
+                    "var": "fs",
+                    "module": "fs"
+                },
+                {
+                    "var": "os",
+                    "module": "os"
+                },
+                {
+                    "var": "tf",
+                    "module": "@tensorflow/tfjs-node-gpu"
+                }
+            ],
+            "x": 420,
+            "y": 280,
+            "wires": [
+                [],
+                [],
+                []
+            ]
+        },
+        {
+            "id": "60ca3f1fc0afd3a0",
+            "type": "function",
+            "z": "df60034af9a08980",
+            "name": "Set threshold",
+            "func": "//Define threshold\nlet threshold = 0;\nconst global_settings = global.get(\"settings\") || undefined\nlet thresholdType = \"\"\n\nif(global_settings !== undefined){\n    if(\"threshold\" in global_settings){\n        threshold = global_settings[\"threshold\"]\n        thresholdType = \"global\";\n    }\n}\n\nelse if(\"threshold\" in msg){\n    threshold = msg.threshold;\n    thresholdType = \"msg\";\n    if(threshold < 0){\n        threshold = 0\n    }\n    else if(threshold > 1){\n        threshold = 1\n    }\n}\n\nelse{\n    try{\n        threshold = env.get(\"threshold\");\n        thresholdType = \"env\";\n    }\n    catch(err){\n        threshold = 0.5\n        thresholdType = \"default\";\n    }\n}\n\nif(threshold == undefined){\n    threshold = 0\n}\n\nmsg.thresholdType = thresholdType;\nmsg.threshold = threshold;\nreturn msg;",
+            "outputs": 1,
+            "noerr": 0,
+            "initialize": "",
+            "finalize": "",
+            "libs": [],
+            "x": 390,
+            "y": 180,
+            "wires": [
+                [
+                    "ed443448e3d3331d"
+                ]
+            ]
+        },
+        {
+            "id": "f5e51443b0ac6807",
+            "type": "function",
+            "z": "df60034af9a08980",
+            "name": "isBuffer?",
+            "func": "let timestamp = new Date().toISOString();\nmsg.start = new Date().getTime()\n\nif(Buffer.isBuffer(msg.payload)){\n    return msg;\n}\nelse{\n    node.error(\"msg.payload is not an image buffer\",msg)\n    node.status({fill:\"red\",shape:\"dot\",text:timestamp + \" msg.payload is not an image buffer\"});  \n    return null;\n}",
+            "outputs": 1,
+            "noerr": 0,
+            "initialize": "",
+            "finalize": "",
+            "libs": [],
+            "x": 220,
+            "y": 100,
+            "wires": [
+                [
+                    "fa2ef0a82c93f080"
+                ]
+            ]
+        },
+        {
+            "id": "f5fcd7150330c1fa",
+            "type": "status",
+            "z": "df60034af9a08980",
+            "name": "",
+            "scope": [
+                "ed443448e3d3331d",
+                "f5e51443b0ac6807"
+            ],
+            "x": 460,
+            "y": 420,
+            "wires": [
+                []
+            ]
+        },
+        {
+            "id": "fa2ef0a82c93f080",
+            "type": "image-info",
+            "z": "df60034af9a08980",
+            "name": "",
+            "x": 390,
+            "y": 100,
+            "wires": [
+                [
+                    "60ca3f1fc0afd3a0"
+                ]
+            ]
+        },
+        {
+            "id": "a3c94178f4bbda57",
+            "type": "subflow:df60034af9a08980",
+            "z": "213d881cf0833211",
+            "name": "",
+            "env": [
+                {
+                    "name": "model_folder",
+                    "value": "C:\\Users\\juha.autioniemi\\.node-red\\savedmodel",
+                    "type": "str"
+                }
+            ],
+            "x": 380,
+            "y": 220,
+            "wires": [
+                [
+                    "f13e16091a2fe545"
+                ],
+                [
+                    "6b4b1a99b8c79034"
+                ],
+                [
+                    "0e2379d67eec43fa"
+                ]
+            ]
+        }
+    ]
+}
