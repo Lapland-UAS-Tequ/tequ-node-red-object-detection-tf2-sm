@@ -7,7 +7,7 @@ Detect objects from image using Tensorflow 2 SavedModel.
 
 Run the following command in your Node-RED user directory - typically `~/.node-red`
 
-        npm install tequ-node-red-object-detection-tf2-sm
+        npm install Lapland-UAS-Tequ/tequ-node-red-object-detection-tf2-sm
 
 ## Information
 
